@@ -75,7 +75,7 @@ async function tool(name, args = {}) {
   const c = cfg(); if (!c.umbrelToken) throw new Error('no-umbrel-token')
   for (let a = 0; a < 2; a++) {
     try {
-      if (!session) { const r = await mcpPost(c, {jsonrpc: '2.0', id: rid++, method: 'initialize', params: {protocolVersion: '2025-03-26', capabilities: {}, clientInfo: {name: 'harbormaster', version: '0.2'}}}); if (r?.error) throw new Error(r.error.message); await mcpPost(c, {jsonrpc: '2.0', method: 'notifications/initialized'}) }
+      if (!session) { const r = await mcpPost(c, {jsonrpc: '2.0', id: rid++, method: 'initialize', params: {protocolVersion: '2025-03-26', capabilities: {}, clientInfo: {name: 'harbormaster', version: '0.2.1'}}}); if (r?.error) throw new Error(r.error.message); await mcpPost(c, {jsonrpc: '2.0', method: 'notifications/initialized'}) }
       const r = await mcpPost(c, {jsonrpc: '2.0', id: rid++, method: 'tools/call', params: {name, arguments: args}})
       if (r?.error) throw new Error(r.error.message)
       const txt = (r.result?.content || []).map((x) => x.text || '').join('')
@@ -140,6 +140,7 @@ async function overview() {
   try { umbrelApps = await tool('list_apps') } catch (e) { umbrelError = e.message === 'no-umbrel-token' ? null : e.message }
   const ids = new Set(list.map(projectOf).filter(Boolean)); umbrelApps?.forEach((a) => ids.add(a.id))
   const ports = publishedPorts(list)
+  for (const id of ids) { const m = await manifestFor(id, priv); if (m?.port && !ports.some((p) => p.port === Number(m.port) && p.app === id)) ports.push({port: Number(m.port), proto: 'tcp', app: id, container: 'umbrelOS app proxy', target: 'UI'}) }
   const byPort = {}; for (const p of ports) (byPort[`${p.port}/${p.proto}`] ||= []).push(p.app)
   const conflicts = Object.entries(byPort).filter(([, a]) => new Set(a).size > 1).map(([k, a]) => ({port: k, apps: [...new Set(a)]}))
   const apps = []
@@ -147,7 +148,7 @@ async function overview() {
     const cs = list.filter((c) => projectOf(c) === id)
     const u = umbrelApps?.find((a) => a.id === id)
     const m = await manifestFor(id, priv)
-    const running = cs.filter((c) => c.State === 'running').length
+    const running = cs.filter((c) => c.State === 'running' || /^Exited \(0\)/.test(c.Status)).length
     apps.push({id, name: u?.name || m?.name || id, version: u?.version || m?.version || '', state: u?.state || (cs.length ? (running === cs.length ? 'running' : running ? 'partial' : 'stopped') : 'unknown'),
       updateAvailable: u?.updateAvailable || false, icon: m?.icon || null, uiPort: m?.port || null, private: priv.has(id),
       source: priv.has(id) ? 'private' : id.startsWith(cfg().publicPrefix) ? 'heilss' : u || m ? 'umbrel' : 'other',
@@ -188,7 +189,9 @@ function portsFromCompose(composeText, manifestText) {
   return out
 }
 async function checkConflicts(id, composeText, manifestText) {
-  const used = publishedPorts(await listContainers()).filter((p) => p.app !== id)
+  const list = await listContainers(); const priv = await storeApps()
+  const used = publishedPorts(list).filter((p) => p.app !== id)
+  for (const a of new Set(list.map(projectOf).filter(Boolean))) if (a !== id) { const m = await manifestFor(a, priv); if (m?.port) used.push({port: Number(m.port), proto: 'tcp', app: a}) }
   const issues = []
   let wanted; try { wanted = portsFromCompose(composeText, manifestText) } catch (e) { return [`YAML error: ${e.message}`] }
   for (const w of wanted) {
@@ -218,7 +221,7 @@ async function save(id, body) {
   manifestCache.delete(id)
   pending.set(id, {version, commit: r?.commit?.sha, since: Date.now(), status: cfg().umbrelToken ? 'waiting-for-store-refresh' : 'waiting-for-user'})
   pendingLoop()
-  return {ok: true, version, commit: r?.commit?.sha, commitUrl: r?.commit?.html_url, autoUpdate: !!cfg().umbrelToken}
+  return {ok: true, version, commit: r?.commit?.sha, commitUrl: r?.commit?.html_url?.replace(cfg().giteaUrl, process.env.GITEA_PUBLIC_URL || cfg().giteaUrl), autoUpdate: !!cfg().umbrelToken}
 }
 async function adopt(id) {
   const c = cfg(); let base
@@ -271,4 +274,4 @@ http.createServer(async (req, res) => {
     if (f.startsWith(path.join(process.cwd(), 'public')) && fs.existsSync(f) && fs.statSync(f).isFile()) { res.writeHead(200, {'content-type': MIME[path.extname(f)] || 'application/octet-stream'}); return fs.createReadStream(f).pipe(res) }
     res.writeHead(404); res.end()
   } catch (e) { log('error', u.pathname, e.message); json(res, 500, {error: e.message}) }
-}).listen(PORT, () => log(`Harbormaster 0.2 on :${PORT}`))
+}).listen(PORT, () => log(`Harbormaster 0.2.1 on :${PORT}`))
