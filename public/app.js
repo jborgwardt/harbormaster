@@ -1,71 +1,53 @@
-const $ = (h) => { const d = document.createElement('div'); d.innerHTML = h; return d }
-const api = async (p, o = {}) => { const r = await fetch(p, {headers: {'content-type': 'application/json'}, ...o, body: o.body ? JSON.stringify(o.body) : undefined}); const j = await r.json(); if (!r.ok) throw new Error(j.error || r.status); return j }
-const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]))
-const main = document.getElementById('main')
-let used = {}
-async function show(view) { main.innerHTML = 'Loading…'; try { view === 'setup' ? await setup() : await apps() } catch (e) { main.innerHTML = `<p class="err">${esc(e.message)}</p>` } }
-async function apps() {
-  const o = await api('/api/overview'); used = o.usedPorts
-  document.getElementById('status').innerHTML = `Umbrel API: ${o.configured.umbrel ? '✅' : '⚠️'} · Gitea backup: ${o.configured.gitea ? '✅' : '⚠️'}`
-  main.innerHTML = (o.umbrelError ? `<p class="warn">Umbrel API: ${esc(o.umbrelError)} — open Setup.</p>` : '') +
-   `<p><button onclick="backupAll()">Back up all to Gitea</button> <button onclick="restoreAll()">Restore missing from Gitea</button></p>
-   <table><tr><th>App</th><th>Status</th><th>Host ports</th><th>Containers</th><th></th></tr>${o.apps.map((a) => `<tr>
-   <td><b>${esc(a.name)}</b><br><small>${esc(a.id)} ${a.version ? '· ' + esc(a.version) : ''}</small>${a.schema ? '<br><span class="pill">schema</span>' : ''}</td>
-   <td><span class="pill ${a.state === 'ready' ? 'ready' : ''}">${esc(a.state)}</span></td>
-   <td>${a.ports.map((p) => `${p.host}→${p.container}/${p.proto}`).join('<br>') || '<small>none (proxy only)</small>'}${a.aliases.map((x) => `<br><small>alias ${x.hostPort}→${esc(x.target)}</small>`).join('')}</td>
-   <td>${a.containers.map((c) => `<small>${esc(c.service)}: ${esc(c.status)}</small>`).join('<br>')}</td>
-   <td><button onclick="edit('${a.id}')">Edit</button></td></tr>`).join('')}</table>`
-}
-function envRow(e = {}, services = []) {
-  return `<div class="row"><input list="svc" placeholder="service" value="${esc(e.serviceName || services[0] || '')}" class="svc"><input placeholder="NAME" value="${esc(e.name || '')}" class="nm">
-  <input type="password" placeholder="value" value="${esc(e.value || '')}" class="val" onfocus="this.type='text'" onblur="this.type='password'"><button onclick="this.parentNode.remove()">✕</button></div>`
-}
-function aliasRow(a = {}) { return `<div class="row"><input placeholder="host port" value="${esc(a.hostPort || '')}" class="hp" oninput="chk(this)"><input placeholder="target container:port" value="${esc(a.target || '')}" class="tg"><small class="cf"></small><button onclick="this.parentNode.remove()">✕</button></div>` }
-let cur
-function chk(el) { const o = used[`${el.value}/tcp`]; el.parentNode.querySelector('.cf').innerHTML = o && o !== cur ? `<span class="err">in use by ${esc(o)}</span>` : '' }
-async function edit(id) {
-  cur = id; const d = await api(`/api/apps/${id}`); const env = d.environment; const svcs = env.services || []
-  const custom = [...(env.custom || [])]
-  for (const f of d.schema?.fields || []) if (!custom.some((e) => e.name === f.name)) custom.push({serviceName: f.service || svcs[0], name: f.name, value: ''})
-  const docs = Object.fromEntries((d.schema?.fields || []).map((f) => [f.name, f]))
-  main.innerHTML = `<h2>${esc(d.name)} <small>${esc(d.id)} · ${esc(d.state)}</small></h2>
-  ${d.missing.length ? `<p class="warn">Required by schema but not set: ${d.missing.map((f) => esc(f.name)).join(', ')}</p>` : ''}
-  <datalist id="svc">${svcs.map((s) => `<option>${esc(s)}</option>`).join('')}</datalist>
-  <div class="card"><h3>Secrets & environment (stored by umbrelOS, survive updates)</h3><small>Services: ${svcs.map(esc).join(', ')}</small>
-  <div id="env">${custom.map((e) => envRow(e, svcs) + (docs[e.name] ? `<small>${esc(docs[e.name].description || '')}</small>` : '')).join('')}</div><button onclick="document.getElementById('env').append($(envRow({}, ${esc(JSON.stringify(svcs))})))">+ variable</button>
-  ${(env.exposed || []).length ? `<h4>App-declared settings</h4><div id="exp">${env.exposed.map((x) => `<div class="row"><b>${esc(x.name)}</b><small>default ${esc(x.default)}</small><input data-n="${esc(x.name)}" value="${esc(x.value ?? x.default ?? '')}"></div>`).join('')}</div>` : ''}</div>
-  <div class="card"><h3>Extra host ports</h3><small>umbrelOS has no host-port override; Harbormaster publishes durable relay ports (re-applied every 5 min and on start) to a target inside the app.</small>
-  <div id="al">${d.aliases.map(aliasRow).join('')}</div><button onclick="document.getElementById('al').append($(aliasRow()))">+ port</button></div>
-  <p><input id="msg" placeholder="commit message (optional)"></p>
-  <button class="primary" onclick="save('${id}')">Save, restart & commit</button> <button onclick="post('${id}','restore')">Restore from Gitea</button> <button onclick="post('${id}','restart')">Restart</button> <button onclick="show('apps')">Back</button>
-  <pre id="out"></pre>`
-}
-async function save(id, force = false) {
-  const customEnvironment = [...document.querySelectorAll('#env .row')].map((r) => ({serviceName: r.querySelector('.svc').value, name: r.querySelector('.nm').value.trim(), value: r.querySelector('.val').value})).filter((e) => e.name)
-  const environment = [...document.querySelectorAll('#exp input')].map((i) => ({name: i.dataset.n, value: i.value}))
-  const aliases = [...document.querySelectorAll('#al .row')].map((r) => ({hostPort: r.querySelector('.hp').value, target: r.querySelector('.tg').value})).filter((a) => a.hostPort)
-  const out = document.getElementById('out'); out.textContent = 'Saving…'
-  try {
-    const r = await api(`/api/apps/${id}`, {method: 'POST', body: {customEnvironment, environment: environment.length ? environment : undefined, aliases, force, message: document.getElementById('msg').value}})
-    if (!r.ok) { if (confirm('Port conflicts:\n' + r.conflicts.join('\n') + '\n\nSave anyway?')) return save(id, true); out.textContent = 'Not saved: ' + r.conflicts.join('; '); return }
-    out.textContent = `Saved. umbrelOS is restarting the app. Gitea commit: ${r.commitError ? 'FAILED ' + r.commitError : r.committed ? 'yes' : 'no change'}`
-  } catch (e) { out.textContent = 'Error: ' + e.message }
-}
-async function post(id, what) { const out = document.getElementById('out'); try { out.textContent = JSON.stringify(await api(`/api/apps/${id}/${what}`, {method: 'POST'}), null, 2) } catch (e) { out.textContent = e.message } }
-async function backupAll() { alert(JSON.stringify(await api('/api/backup', {method: 'POST'}), null, 1)) }
-async function restoreAll() { await api('/api/restore', {method: 'POST'}); alert('Restore pass done') }
-async function setup() {
-  const c = await api('/api/config')
-  main.innerHTML = `<div class="card"><h3>umbrelOS API (MCP)</h3><small>In umbrelOS Settings → MCP / AI agents, enable MCP, grant <b>all apps</b>, and create a token labelled “Harbormaster”. Paste it here. Stored only in this app's data dir (chmod 600).</small>
-  <p>Endpoint <input id="umbrelMcpUrl" value="${esc(c.umbrelMcpUrl)}"></p><p>Token <input id="umbrelToken" type="password" value="${esc(c.umbrelToken)}"></p></div>
-  <div class="card"><h3>Private Gitea backup repo</h3><p>Gitea URL <input id="giteaUrl" value="${esc(c.giteaUrl)}"></p><p>Repo (owner/name) <input id="giteaRepo" value="${esc(c.giteaRepo)}"></p><p>Access token (repo read/write) <input id="giteaToken" type="password" value="${esc(c.giteaToken)}"></p>
-  <p><label><input type="checkbox" id="autoRestore" style="width:auto" ${c.autoRestore ? 'checked' : ''}> Auto-restore missing secrets after (re)install</label></p></div>
-  <div class="card"><h3>Public schemas</h3><p>Base URL <input id="schemaBaseUrl" value="${esc(c.schemaBaseUrl)}"></p><small>Reads &lt;base&gt;/&lt;app-id&gt;/harbormaster.schema.json (field names only).</small></div>
-  <button class="primary" onclick="saveCfg()">Save & test</button><pre id="out"></pre>`
-}
-async function saveCfg() {
-  const b = {}; for (const k of ['umbrelMcpUrl', 'umbrelToken', 'giteaUrl', 'giteaRepo', 'giteaToken', 'schemaBaseUrl']) b[k] = document.getElementById(k).value
-  b.autoRestore = document.getElementById('autoRestore').checked
-  document.getElementById('out').textContent = JSON.stringify(await api('/api/config', {method: 'POST', body: b}), null, 2)
-}
-show('apps')
+const $=(s,r=document)=>r.querySelector(s),esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))
+const api=async(p,o={})=>{const r=await fetch(p,{headers:{'content-type':'application/json'},...o,body:o.body?JSON.stringify(o.body):undefined});const t=await r.text();let j;try{j=JSON.parse(t)}catch{j=t};if(!r.ok)throw new Error(j.error||r.status);return j}
+let data=null,view='apps',filter=''
+document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{document.querySelectorAll('nav button').forEach(x=>x.classList.remove('on'));b.classList.add('on');view=b.dataset.v;render()})
+const stateChip=s=>`<span class="chip ${/ready|running/.test(s)?'ok':/stop|unknown|fail/.test(s)?'bad':'warn'}">${esc(s)}</span>`
+const icon=a=>a.icon?`<img class="ic" src="${esc(a.icon)}" onerror="this.src='icon.png'">`:`<img class="ic" src="icon.png">`
+async function load(){data=await api('/api/overview');$('#sub').textContent=`${data.apps.length} apps · ${data.ports.length} published ports${data.conflicts.length?` · ${data.conflicts.length} conflicts`:''}`}
+async function render(){const m=$('#main');try{if(!data)await load();if(view==='apps')apps(m);else if(view==='ports')ports(m);else await settings(m)}catch(e){m.innerHTML=`<div class="msg bad">${esc(e.message)}</div>`}}
+function apps(m){
+  const list=data.apps.filter(a=>!filter||(a.name+a.id).toLowerCase().includes(filter))
+  m.innerHTML=`${!data.umbrel.configured?`<div class="msg warn">umbrelOS API not connected: state, versions and one-click updates are limited. <a href="#" onclick="view='settings';render();return false" style="color:#fcd34d">Connect</a></div>`:''}${data.umbrel.error?`<div class="msg bad">umbrelOS API: ${esc(data.umbrel.error)}</div>`:''}
+  <div class="toolbar"><input placeholder="Search apps" value="${esc(filter)}" oninput="filter=this.value.toLowerCase();apps($('#main'));this.focus();this.setSelectionRange(99,99)"><button onclick="data=null;render()">Refresh</button></div>
+  <div class="grid">${list.map(a=>`<div class="card" onclick="openApp('${a.id}')"><div class="ch">${icon(a)}<div><b>${esc(a.name)}</b><small>${esc(a.id)}${a.version?' · v'+esc(a.version):''}</small></div></div>
+  <div class="chips">${stateChip(a.state)}${a.private?'<span class="chip priv">private store</span>':`<span class="chip">${esc(a.source)}</span>`}${a.updateAvailable?'<span class="chip warn">update</span>':''}${a.pending&&a.pending.status!=='done'?`<span class="chip warn">${esc(a.pending.status)}</span>`:''}
+  ${a.ports.map(p=>`<span class="chip">:${p.port}${p.proto==='udp'?'/udp':''}</span>`).join('')}<span class="chip">${a.containers.length} ctr</span></div></div>`).join('')}</div>`}
+function ports(m){
+  m.innerHTML=`${data.conflicts.length?data.conflicts.map(c=>`<div class="msg bad">Port ${esc(c.port)} published by ${c.apps.map(esc).join(', ')}</div>`).join(''):'<div class="msg ok">No host port conflicts.</div>'}
+  <div class="box"><table><tr><th>Host port</th><th>App</th><th>Container</th><th>→</th></tr>${[...data.ports].sort((a,b)=>a.port-b.port).map(p=>`<tr><td><b>${p.port}</b>/${p.proto}</td><td>${esc(p.app)}</td><td>${esc(p.container)}</td><td>${p.target}</td></tr>`).join('')}</table></div>`}
+async function settings(m){const s=await api('/api/settings')
+  m.innerHTML=`<div class="box"><h3>umbrelOS API</h3><p style="opacity:.75">Optional, enables live state/versions and automatic updates after you save. In umbrelOS open <b>Settings → MCP</b>, enable it, give access to <b>all apps</b>, create a token named “Harbormaster”, and paste it here.</p>
+  <label>Token ${s.umbrelToken?'<span class="chip ok">set</span>':''}<input id="ut" type="password" placeholder="paste token"></label><br><br><label>Endpoint<input id="uu" value="${esc(s.umbrelMcpUrl)}"></label></div>
+  <div class="box"><h3>Private store (Gitea)</h3><p>Repo <b>${esc(s.storeRepo)}</b> ${s.giteaToken?'<span class="chip ok">token set</span>':'<span class="chip bad">no token</span>'}</p><input id="gt" type="password" placeholder="replace Gitea token (optional)"></div>
+  <button class="primary" onclick="saveSettings()">Save & test</button><pre id="out" class="hidden"></pre>`}
+async function saveSettings(){const o=$('#out');o.classList.remove('hidden');o.textContent='Testing…';o.textContent=JSON.stringify(await api('/api/settings',{method:'POST',body:{umbrelToken:$('#ut').value,umbrelMcpUrl:$('#uu').value,giteaToken:$('#gt').value}}),null,2);data=null}
+let cur=null
+async function openApp(id){const a=data.apps.find(x=>x.id===id);$('#drawer').classList.remove('hidden');const p=$('#panel');p.innerHTML='Loading…'
+  cur={a,info:await api('/api/apps/'+id)};const i=cur.info
+  p.innerHTML=`<div class="ch">${icon(a)}<div><b style="font-size:20px">${esc(a.name)}</b><small>${esc(a.id)}${a.version?' · v'+esc(a.version):''}</small></div><button style="margin-left:auto" onclick="$('#drawer').classList.add('hidden')">✕</button></div>
+  <div class="chips">${stateChip(a.state)}${a.private?'<span class="chip priv">private store</span>':''}${a.uiPort?`<a class="chip" style="color:#fff" target="_blank" href="http://${location.hostname}:${a.uiPort}">open :${a.uiPort}</a>`:''}</div>
+  <div style="display:flex;gap:8px;margin-top:14px"><button onclick="act('restart')">Restart</button>${data.umbrel.configured?`<button onclick="act('stop')">Stop</button><button onclick="act('start')">Start</button>${a.updateAvailable?`<button class="primary" onclick="act('update')">Update</button>`:''}`:''}</div>
+  ${i.pending?`<div class="msg warn">Pending change → v${esc(i.pending.version)}: ${esc(i.pending.status)}${i.pending.status==='waiting-for-user'?' — umbrelOS will show an Update for this app within ~5 min; click Update there (or connect the umbrelOS API in Settings for automatic updates).':''}</div>`:''}
+  <div class="tabs"><button class="on" onclick="tab(this,'ov')">Overview</button><button onclick="tab(this,'env')">Environment</button><button onclick="tab(this,'logs')">Logs</button><button onclick="tab(this,'edit')">${a.private?'Edit':'Adopt'}</button></div><div id="tab"></div>`
+  tab(p.querySelector('.tabs button'),'ov')}
+async function act(x){try{await api(`/api/apps/${cur.a.id}/${x}`,{method:'POST'});alert(x+' requested')}catch(e){alert(e.message)}}
+async function tab(btn,t){btn.parentNode.querySelectorAll('button').forEach(b=>b.classList.remove('on'));btn.classList.add('on');const el=$('#tab'),i=cur.info,a=cur.a
+  if(t==='ov')el.innerHTML=`<div class="box"><table><tr><th>Container</th><th>Image</th><th>Status</th></tr>${i.containers.map(c=>`<tr><td>${esc(c.service)}<br><small style="opacity:.5">${esc(c.name)}</small></td><td><small>${esc(c.image)}</small></td><td>${stateChip(c.state)} <small>${esc(c.status)}</small></td></tr>`).join('')}</table></div>
+   <div class="box"><b>Host ports</b><div class="chips">${a.ports.map(p=>`<span class="chip">${p.port}→${p.target}/${p.proto}</span>`).join('')||'<small style="opacity:.6">none (served through the Umbrel app proxy)</small>'}</div></div>
+   <div class="box"><b>Mounts</b><pre>${esc(i.containers.flatMap(c=>c.mounts.map(m=>c.service+': '+m)).join('\n'))}</pre></div>`
+  if(t==='env')el.innerHTML=i.containers.map(c=>`<div class="box"><b>${esc(c.service)}</b><table>${c.env.map(e=>`<tr><td><code>${esc(e.k)}</code></td><td><small>${esc(e.v)}</small></td></tr>`).join('')}</table></div>`).join('')
+  if(t==='logs'){el.innerHTML='<pre>Loading…</pre>';el.innerHTML=`<button onclick="tab($('.tabs button:nth-child(3)'),'logs')">Reload</button><pre>${esc(await api(`/api/apps/${a.id}/logs?lines=300`))}</pre>`}
+  if(t==='edit'){if(!a.private){el.innerHTML=`<div class="box"><p>This app comes from <b>${esc(a.source)}</b> and is read-only here.</p><p style="opacity:.75">Adopt copies its definition into your private store as a new app you can edit. Switching requires uninstalling the original (its data is deleted), so back up first.</p><button class="primary" onclick="adoptApp()">Adopt into private store</button><pre id="out" class="hidden"></pre></div>`;return}
+   const man=i.manifest||'';const port=(man.match(/^port:\s*(\d+)/m)||[])[1]||''
+   el.innerHTML=`<div class="box"><div class="row"><label>App port (Umbrel app proxy)<input id="uiPort" value="${esc(port)}" oninput="check()"></label><label>Change note<input id="note" placeholder="e.g. move to port 7192"></label></div>
+   <p><small style="opacity:.6">docker-compose.yml — edit ports, environment, image or any value. Secrets are fine here: this store is private to your network.</small></p><textarea id="compose" oninput="check()">${esc(i.compose)}</textarea>
+   <div id="issues"></div><button class="primary" onclick="saveApp()">Save, commit & update</button><pre id="out" class="hidden"></pre></div>`;check()}}
+let ct;function check(){clearTimeout(ct);ct=setTimeout(async()=>{try{const r=await api(`/api/apps/${cur.a.id}/check`,{method:'POST',body:{compose:$('#compose').value,uiPort:$('#uiPort').value}});$('#issues').innerHTML=r.issues.map(x=>`<div class="msg bad">⚠ ${esc(x)}</div>`).join('')||'<div class="msg ok">No port conflicts</div>'}catch(e){$('#issues').innerHTML=`<div class="msg bad">${esc(e.message)}</div>`}},300)}
+async function saveApp(force=false){const o=$('#out');o.classList.remove('hidden');o.textContent='Committing…'
+  try{const r=await api(`/api/apps/${cur.a.id}/save`,{method:'POST',body:{compose:$('#compose').value,uiPort:$('#uiPort').value,note:$('#note').value,force}})
+  if(!r.ok){if(confirm('Port conflicts:\n'+r.issues.join('\n')+'\n\nSave anyway?'))return saveApp(true);o.textContent='Not saved.';return}
+  o.textContent=`Committed v${r.version} (${(r.commit||'').slice(0,8)}).\n${r.autoUpdate?'Harbormaster will apply the update as soon as umbrelOS sees the new version (≤5 min).':'umbrelOS will offer an Update for this app within ~5 min. Click Update in umbrelOS to apply it.'}`;data=null}catch(e){o.textContent='Error: '+e.message}}
+async function adoptApp(){const o=$('#out');o.classList.remove('hidden');try{o.textContent=JSON.stringify(await api(`/api/apps/${cur.a.id}/adopt`,{method:'POST'}),null,2)}catch(e){o.textContent=e.message}}
+$('#drawer').onclick=e=>{if(e.target.id==='drawer')$('#drawer').classList.add('hidden')}
+render();setInterval(()=>{if(view==='apps'&&$('#drawer').classList.contains('hidden')){data=null;render()}},30000)

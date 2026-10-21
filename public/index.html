@@ -1,13 +1,8 @@
 <!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Harbormaster</title>
-<style>
-body{font-family:system-ui,sans-serif;margin:0;background:#0f1115;color:#e6e6e6}header{padding:14px 20px;background:#171a21;display:flex;gap:16px;align-items:center}
-header h1{font-size:18px;margin:0}nav button,button{background:#2b3240;color:#fff;border:0;border-radius:6px;padding:7px 12px;cursor:pointer}button.primary{background:#5b5bd6}
-main{padding:20px;max-width:1200px;margin:auto}table{width:100%;border-collapse:collapse}td,th{padding:8px;border-bottom:1px solid #262b36;text-align:left;vertical-align:top;font-size:14px}
-.pill{padding:2px 8px;border-radius:10px;font-size:12px;background:#2b3240}.ready{background:#1f6f43}.warn{color:#f5b041}.err{color:#ff6b6b}
-input{background:#0b0d11;color:#eee;border:1px solid #333a48;border-radius:5px;padding:6px;width:100%;box-sizing:border-box}.row{display:grid;grid-template-columns:140px 220px 1fr 40px;gap:6px;margin:4px 0}
-.card{background:#171a21;border-radius:10px;padding:16px;margin:12px 0}small{color:#9aa}code{font-size:12px}
-</style></head><body>
-<header><h1>⚓ Harbormaster</h1><nav><button onclick="show('apps')">Apps</button> <button onclick="show('setup')">Setup</button></nav><span id="status"></span></header>
-<main id="main">Loading…</main>
+<title>Harbormaster</title><link rel="icon" href="icon.png"><link rel="stylesheet" href="style.css"></head><body>
+<div class="bg"></div>
+<header><img src="icon.png" class="logo"><div><h1>Harbormaster</h1><small id="sub">Your Umbrel at a glance</small></div>
+<nav><button data-v="apps" class="on">Apps</button><button data-v="ports">Ports</button><button data-v="settings">Settings</button></nav></header>
+<main id="main"><div class="loading">Loading…</div></main>
+<div id="drawer" class="drawer hidden"><div class="panel" id="panel"></div></div>
 <script src="app.js"></script></body></html>
